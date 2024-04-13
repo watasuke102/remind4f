@@ -1,0 +1,10 @@
+[settings]
+discord_bot_token = ""
+channel_id = ""
+disable_everyone = false
+notice_time = "08:00"    # 24h format
+
+# [[events]]
+# title = "EventTitle"
+# desc = "event description"
+# date = "YYYY-MM-DD"
