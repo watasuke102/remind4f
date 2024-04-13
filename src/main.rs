@@ -4,7 +4,7 @@
 // Email  : <watasuke102@gmail.com>
 // Twitter: @Watasuke102
 // This software is released under the MIT or MIT SUSHI-WARE License.
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
+use chrono::{FixedOffset, NaiveDate, NaiveTime, Timelike, Utc};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
