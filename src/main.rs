@@ -4,6 +4,9 @@
 // Email  : <watasuke102@gmail.com>
 // Twitter: @Watasuke102
 // This software is released under the MIT or MIT SUSHI-WARE License.
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
+use log::{debug, error, info};
+use serde::{Deserialize, Serialize};
 use chrono::{FixedOffset, NaiveTime, Timelike, Utc};
 use log::{debug, error, info, trace};
 use serde::Deserialize;
@@ -24,15 +27,16 @@ struct Settings {
 #[derive(Deserialize, Debug)]
 struct Event {
   title: String,
-  desc:  String,
   date:  String,
 }
 
 fn main() {
   let jst = FixedOffset::east_opt(9 * 3600).unwrap();
-  let data = init();
-  debug!("Parsed data: {:#?}", data);
-  let Ok(notice_time) = NaiveTime::parse_from_str(&data.settings.notice_time, "%H:%M") else {
+  let Ok((settings, embed)) = init() else {
+    std::process::exit(1);
+  };
+  debug!("Embed: {:#?}", embed);
+  let Ok(notice_time) = NaiveTime::parse_from_str(&settings.notice_time, "%H:%M") else {
     error!("Failed to parse `notice_time`; please check data.toml");
     std::process::exit(1);
   };
@@ -48,7 +52,46 @@ fn main() {
   }
 }
 
-fn init() -> Data {
+#[derive(Debug, Serialize, Deserialize)]
+struct Embed {
+  title:  String,
+  color:  u32,
+  fields: Vec<Field>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+struct Field {
+  name:  String,
+  value: String,
+}
+
+fn build_embed(events: &Vec<Event>) -> Embed {
+  let today = Utc::now()
+    .with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap())
+    .date_naive();
+  let mut result = Embed {
+    title:  "Events".to_string(),
+    color:  0x98c379,
+    fields: Vec::<Field>::new(),
+  };
+  for event in events {
+    let Ok(event_date) = NaiveDate::parse_from_str(&event.date, "%F") else {
+      error!("Failed to parse event date: {:?}", event);
+      continue;
+    };
+    if event_date < today {
+      info!("Overdue event: {:?}", event);
+      continue;
+    }
+    let days = (event_date - today).num_days();
+    result.fields.push(Field {
+      name:  event.title.clone(),
+      value: format!("Due: {} day{}", days, if days == 1 { "" } else { "s" }),
+    })
+  }
+  result
+}
+
+fn init() -> Result<(Settings, Embed), ()> {
   {
     use simplelog::*;
     CombinedLogger::init(vec![
@@ -66,16 +109,19 @@ fn init() -> Data {
     ])
     .unwrap();
   }
-  match &std::fs::read_to_string("data.toml") {
+  let data: Data = match &std::fs::read_to_string("data.toml") {
     Ok(s) => toml::from_str(s).unwrap(),
     Err(e) => {
       if e.kind() == ErrorKind::NotFound {
-        panic!(
+        error!(
           "`data.toml` is not found. Try `cp data-sample.toml data.toml`\n({})",
           e
         );
+      } else {
+        error!("{}", e);
       }
-      panic!("{}", e);
+      return Err(());
     }
-  }
+  };
+  Ok((data.settings, build_embed(&data.events)))
 }

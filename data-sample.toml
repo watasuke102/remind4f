@@ -6,5 +6,4 @@ notice_time = "08:00"    # 24h format
 
 # [[events]]
 # title = "EventTitle"
-# desc = "event description"
-# date = "YYYY-MM-DD"
+# date = "YYYY-MM-DD" # ISO 8601
