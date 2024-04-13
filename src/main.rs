@@ -31,7 +31,7 @@ async fn send_message(
     .body(
       json!({
           "content": format!("{}{}",
-              if settings.disable_everyone{""} else {"@everyone\n"},
+              if settings.disable_everyone{""} else {"@everyone "},
               title
           ),
           "tts": false,
