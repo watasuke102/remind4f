@@ -44,19 +44,19 @@ async fn send_message(
   Ok(())
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Data {
   settings: Settings,
   events:   Vec<Event>,
 }
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Settings {
   discord_bot_token: String,
   channel_id:        String,
   disable_everyone:  bool,
   notice_time:       String,
 }
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Event {
   title: String,
   date:  String,
@@ -64,11 +64,10 @@ struct Event {
 
 fn main() {
   let jst = FixedOffset::east_opt(9 * 3600).unwrap();
-  let Ok((settings, embed)) = init() else {
+  let Ok(data) = init() else {
     std::process::exit(1);
   };
-  debug!("Embed: {:#?}", embed);
-  let Ok(notice_time) = NaiveTime::parse_from_str(&settings.notice_time, "%H:%M") else {
+  let Ok(notice_time) = NaiveTime::parse_from_str(&data.settings.notice_time, "%H:%M") else {
     error!("Failed to parse `notice_time`; please check data.toml");
     std::process::exit(1);
   };
@@ -80,9 +79,9 @@ fn main() {
     if now.time().hour() == notice_time.hour() && now.time().minute() == notice_time.minute() {
       info!("On time!");
       match send_message(
-        &settings,
+        &data.settings,
         String::from("I remind you of upcoming events!"),
-        &embed,
+        &build_embed(&data.events),
       ) {
         Ok(_) => info!("The message was sent"),
         Err(e) => error!("Something went wrong when sending the message: {:#?}", e),
@@ -131,7 +130,7 @@ fn build_embed(events: &Vec<Event>) -> Embed {
   result
 }
 
-fn init() -> Result<(Settings, Embed), ()> {
+fn init() -> Result<Data, ()> {
   {
     use simplelog::*;
     CombinedLogger::init(vec![
@@ -163,6 +162,7 @@ fn init() -> Result<(Settings, Embed), ()> {
       return Err(());
     }
   };
+  debug!("{}", toml::to_string(&data).unwrap());
   {
     if data.settings.discord_bot_token.is_empty() {
       error!("`settings.discord_bot_token` is empty");
@@ -173,5 +173,5 @@ fn init() -> Result<(Settings, Embed), ()> {
       return Err(());
     }
   }
-  Ok((data.settings, build_embed(&data.events)))
+  Ok(data)
 }
