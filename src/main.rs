@@ -8,11 +8,16 @@ use chrono::{FixedOffset, NaiveDate, NaiveTime, Timelike, Utc};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::io::ErrorKind;
+use std::{
+  fs::File,
+  io::{ErrorKind, Write},
+  path::Path,
+  sync::{Arc, RwLock},
+};
 
 #[tokio::main]
 async fn send_message(
-  settings: &Settings,
+  env: &Env,
   title: String,
   embeds: &Embed,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -21,17 +26,14 @@ async fn send_message(
   let _resp = client
     .post(format!(
       "https://discord.com/api/channels/{}/messages",
-      settings.channel_id
+      env.channel_id
     ))
     .header("Content-Type", "application/json")
-    .header(
-      "Authorization",
-      format!("Bot {}", settings.discord_bot_token),
-    )
+    .header("Authorization", format!("Bot {}", env.discord_bot_token))
     .body(
       json!({
           "content": format!("{}{}",
-              if settings.disable_everyone{""} else {"@everyone "},
+              if env.disable_everyone{""} else {"@everyone "},
               title
           ),
           "tts": false,
@@ -45,12 +47,8 @@ async fn send_message(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Data {
-  settings: Settings,
-  events:   Vec<Event>,
-}
-#[derive(Debug, Serialize, Deserialize)]
-struct Settings {
+struct Env {
+  port:              i64,
   discord_bot_token: String,
   channel_id:        String,
   disable_everyone:  bool,
@@ -64,10 +62,10 @@ struct Event {
 
 fn main() {
   let jst = FixedOffset::east_opt(9 * 3600).unwrap();
-  let Ok(data) = init() else {
+  let Ok((env, events)) = init() else {
     std::process::exit(1);
   };
-  let Ok(notice_time) = NaiveTime::parse_from_str(&data.settings.notice_time, "%H:%M") else {
+  let Ok(notice_time) = NaiveTime::parse_from_str(&env.notice_time, "%H:%M") else {
     error!("Failed to parse `notice_time`; please check data.toml");
     std::process::exit(1);
   };
@@ -79,9 +77,10 @@ fn main() {
     if now.time().hour() == notice_time.hour() && now.time().minute() == notice_time.minute() {
       info!("On time!");
       match send_message(
-        &data.settings,
+        &env,
         String::from("I remind you of upcoming events!"),
-        &build_embed(&data.events),
+        // TODO: check whether it is empty
+        &build_embed(&events.read().unwrap()),
       ) {
         Ok(_) => info!("The message was sent"),
         Err(e) => error!("Something went wrong when sending the message: {:#?}", e),
@@ -130,7 +129,7 @@ fn build_embed(events: &Vec<Event>) -> Embed {
   result
 }
 
-fn init() -> Result<Data, ()> {
+fn init() -> Result<(Arc<Env>, Arc<RwLock<Vec<Event>>>), ()> {
   {
     use simplelog::*;
     CombinedLogger::init(vec![
@@ -148,12 +147,12 @@ fn init() -> Result<Data, ()> {
     ])
     .unwrap();
   }
-  let data: Data = match &std::fs::read_to_string("data.toml") {
+  let env: Env = match &std::fs::read_to_string("env.toml") {
     Ok(s) => toml::from_str(s).unwrap(),
     Err(e) => {
       if e.kind() == ErrorKind::NotFound {
         error!(
-          "`data.toml` is not found. Try `cp data-sample.toml data.toml`\n({})",
+          "`env.toml` is not found. Try `cp sample-env.toml env.toml`\n({})",
           e
         );
       } else {
@@ -162,16 +161,49 @@ fn init() -> Result<Data, ()> {
       return Err(());
     }
   };
-  debug!("{}", toml::to_string(&data).unwrap());
+  debug!("{}", toml::to_string(&env).unwrap());
   {
-    if data.settings.discord_bot_token.is_empty() {
+    if env.discord_bot_token.is_empty() {
       error!("`settings.discord_bot_token` is empty");
       return Err(());
     }
-    if data.settings.channel_id.is_empty() {
+    if env.channel_id.is_empty() {
       error!("`settings.channel_id` is empty");
       return Err(());
     }
   }
-  Ok(data)
+
+  // initialize `events.toml` if it doesn't exist
+  let events_file_path = Path::new("events.toml");
+  if !events_file_path.exists() {
+    let Ok(mut file) = File::create_new(&events_file_path) else {
+      error!("Cannot find `events.toml` and failed to create it");
+      return Err(());
+    };
+    writeln!(
+      file,
+      r#"# [[events]]
+# title = "EventTitle"
+# date = "YYYY-MM-DD" # ISO 8601
+"#
+    )
+    .unwrap();
+  }
+
+  let events: Vec<Event> = match &std::fs::read_to_string(&events_file_path) {
+    Ok(s) => toml::from_str(s).unwrap(),
+    Err(e) => {
+      if e.kind() == ErrorKind::NotFound {
+        error!(
+          "`events.toml` is not found. Try `cp sample-events.toml events.toml`\n({})",
+          e
+        );
+      } else {
+        error!("{}", e);
+      }
+      return Err(());
+    }
+  };
+
+  Ok((Arc::new(env), Arc::new(RwLock::new(events))))
 }

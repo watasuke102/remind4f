@@ -1,0 +1,5 @@
+port = 19900
+discord_bot_token = ""
+channel_id = ""
+disable_everyone = false
+notice_time = "08:30"    # 24h format
