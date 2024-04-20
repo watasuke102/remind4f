@@ -6,17 +6,14 @@
 // This software is released under the MIT or MIT SUSHI-WARE License.
 use serde::{Deserialize, Serialize};
 use serenity::{
-  all::{Command, Context, EventHandler, GatewayIntents, GuildId, Interaction, Ready},
+  all::{Command, Context, EventHandler, GatewayIntents, Interaction, Ready},
   async_trait,
   prelude::TypeMapKey,
   Client,
 };
-use std::{
-  fs::File,
-  io::{ErrorKind, Write},
-  path::Path,
-  sync::Arc,
-};
+use std::{io::ErrorKind, path::Path, sync::Arc};
+mod add;
+mod events;
 mod show;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,7 +32,7 @@ struct Handler;
 #[async_trait]
 impl EventHandler for Handler {
   async fn ready(&self, ctx: Context, ready: Ready) {
-    Command::set_global_commands(&ctx.http, vec![show::register()])
+    Command::set_global_commands(&ctx.http, vec![show::register(), add::register()])
       .await
       .unwrap();
     let ctx = ctx.clone();
@@ -58,6 +55,7 @@ impl EventHandler for Handler {
     println!("INFO : command came: {:?}", command.data);
     match command.data.name.as_str() {
       "show" => show::execute(&ctx, &command).await,
+      "add" => add::execute(&ctx, &command.data.options(), &command).await,
       _ => (),
     };
   }
@@ -116,17 +114,12 @@ fn init() -> Result<Env, ()> {
   // initialize `events.toml` if it doesn't exist
   let events_file_path = Path::new("events.toml");
   if !events_file_path.exists() {
-    let Ok(mut file) = File::create_new(&events_file_path) else {
-      println!("ERROR: Cannot find `events.toml` and failed to create it");
-      return Err(());
-    };
-    writeln!(
-      file,
+    events::write(String::from(
       r#"# [[events]]
 # title = "EventTitle"
 # date = "YYYY-MM-DD" # ISO 8601
-"#
-    )
+"#,
+    ))
     .unwrap();
   }
 

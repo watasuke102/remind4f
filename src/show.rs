@@ -1,19 +1,10 @@
-use std::io::ErrorKind;
-
 use chrono::{FixedOffset, NaiveDate, NaiveTime, Timelike, Utc};
-use serde::{Deserialize, Serialize};
 use serenity::all::{
   ChannelId, Colour, CommandInteraction, Context, CreateCommand, CreateEmbed,
   CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
 };
 
 use crate::Env;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Event {
-  title: String,
-  date:  String,
-}
 
 pub fn register() -> CreateCommand {
   CreateCommand::new("show").description("Show upcoming events")
@@ -23,7 +14,7 @@ pub async fn execute(ctx: &Context, interaction: &CommandInteraction) {
   let Ok(embed) = build_embed() else {
     return;
   };
-  match interaction
+  if let Err(e) = interaction
     .create_response(
       &ctx.http,
       CreateInteractionResponse::Message(
@@ -34,9 +25,8 @@ pub async fn execute(ctx: &Context, interaction: &CommandInteraction) {
     )
     .await
   {
-    Ok(_) => (),
-    Err(e) => println!("ERROR: {}", e),
-  };
+    println!("ERROR: {}", e);
+  }
 }
 
 pub async fn notify_on_specified_time(env: &Env, ctx: &Context) -> Result<(), ()> {
@@ -78,23 +68,8 @@ pub async fn notify_on_specified_time(env: &Env, ctx: &Context) -> Result<(), ()
 }
 
 fn build_embed() -> Result<CreateEmbed, ()> {
-  #[derive(Deserialize)]
-  struct EventsFile {
-    events: Vec<Event>,
-  }
-  let events: EventsFile = match &std::fs::read_to_string("events.toml") {
-    Ok(s) => toml::from_str(s).unwrap(),
-    Err(e) => {
-      if e.kind() == ErrorKind::NotFound {
-        println!(
-          "ERROR: `events.toml` is not found. Try `cp sample-events.toml events.toml`\n({})",
-          e
-        );
-      } else {
-        println!("ERROR: {}", e);
-      }
-      return Err(());
-    }
+  let Ok(events) = crate::events::read_events() else {
+    return Err(());
   };
   let today = Utc::now()
     .with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap())
