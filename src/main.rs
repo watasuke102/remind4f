@@ -46,11 +46,16 @@ async fn send_message(
   Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct Context {
+  env:    Arc<Env>,
+  events: Arc<RwLock<Vec<Event>>>,
+}
 #[derive(Debug, Serialize, Deserialize)]
 struct Env {
   port:              i64,
   discord_bot_token: String,
-  channel_id:        String,
+  channel_id:        u64,
   disable_everyone:  bool,
   notice_time:       String,
 }
@@ -62,10 +67,10 @@ struct Event {
 
 fn main() {
   let jst = FixedOffset::east_opt(9 * 3600).unwrap();
-  let Ok((env, events)) = init() else {
+  let Ok(ctx) = init() else {
     std::process::exit(1);
   };
-  let Ok(notice_time) = NaiveTime::parse_from_str(&env.notice_time, "%H:%M") else {
+  let Ok(notice_time) = NaiveTime::parse_from_str(&ctx.env.notice_time, "%H:%M") else {
     error!("Failed to parse `notice_time`; please check data.toml");
     std::process::exit(1);
   };
@@ -77,10 +82,10 @@ fn main() {
     if now.time().hour() == notice_time.hour() && now.time().minute() == notice_time.minute() {
       info!("On time!");
       match send_message(
-        &env,
+        &ctx.env,
         String::from("I remind you of upcoming events!"),
         // TODO: check whether it is empty
-        &build_embed(&events.read().unwrap()),
+        &build_embed(&ctx.events.read().unwrap()),
       ) {
         Ok(_) => info!("The message was sent"),
         Err(e) => error!("Something went wrong when sending the message: {:#?}", e),
@@ -129,7 +134,7 @@ fn build_embed(events: &Vec<Event>) -> Embed {
   result
 }
 
-fn init() -> Result<(Arc<Env>, Arc<RwLock<Vec<Event>>>), ()> {
+fn init() -> Result<Context, ()> {
   {
     use simplelog::*;
     CombinedLogger::init(vec![
@@ -167,7 +172,7 @@ fn init() -> Result<(Arc<Env>, Arc<RwLock<Vec<Event>>>), ()> {
       error!("`settings.discord_bot_token` is empty");
       return Err(());
     }
-    if env.channel_id.is_empty() {
+    if env.channel_id == 0 {
       error!("`settings.channel_id` is empty");
       return Err(());
     }
@@ -190,7 +195,11 @@ fn init() -> Result<(Arc<Env>, Arc<RwLock<Vec<Event>>>), ()> {
     .unwrap();
   }
 
-  let events: Vec<Event> = match &std::fs::read_to_string(&events_file_path) {
+  #[derive(Deserialize)]
+  struct EventsFile {
+    events: Vec<Event>,
+  }
+  let events: EventsFile = match &std::fs::read_to_string(&events_file_path) {
     Ok(s) => toml::from_str(s).unwrap(),
     Err(e) => {
       if e.kind() == ErrorKind::NotFound {
@@ -205,5 +214,8 @@ fn init() -> Result<(Arc<Env>, Arc<RwLock<Vec<Event>>>), ()> {
     }
   };
 
-  Ok((Arc::new(env), Arc::new(RwLock::new(events))))
+  Ok(Context {
+    env:    Arc::new(env),
+    events: Arc::new(RwLock::new(events.events)),
+  })
 }
