@@ -4,10 +4,9 @@
 // Email  : <watasuke102@gmail.com>
 // Twitter: @Watasuke102
 // This software is released under the MIT or MIT SUSHI-WARE License.
-use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serenity::{
-  all::{Context, EventHandler, GatewayIntents, GuildId, Interaction, Ready},
+  all::{Command, Context, EventHandler, GatewayIntents, GuildId, Interaction, Ready},
   async_trait,
   prelude::TypeMapKey,
   Client,
@@ -31,38 +30,34 @@ pub struct Env {
 impl TypeMapKey for Env {
   type Value = Arc<Env>;
 }
-#[derive(Debug, Serialize, Deserialize)]
-struct Event {
-  title: String,
-  date:  String,
-}
 
 struct Handler;
 #[async_trait]
 impl EventHandler for Handler {
   async fn ready(&self, ctx: Context, ready: Ready) {
-    let data = ctx.data.read().await;
-    let Some(env) = data.get::<Env>() else {
-      return;
-    };
-    GuildId::new(env.channel_id)
-      .set_commands(&ctx.http, vec![show::register()])
-      .await;
-    info!(
-      "ready> name: {}, version: {}",
+    Command::set_global_commands(&ctx.http, vec![show::register()])
+      .await
+      .unwrap();
+    let ctx = ctx.clone();
+    tokio::spawn(async move {
+      let data = ctx.data.read().await;
+      let Some(env) = data.get::<Env>() else {
+        return;
+      };
+      show::notify_on_specified_time(&env, &ctx).await.unwrap();
+    });
+    println!(
+      "INFO : ready> name: {}, version: {}",
       ready.user.name, ready.version
     );
   }
   async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-    let data = ctx.data.read().await;
-    let Some(env) = data.get::<Env>() else {
-      return;
-    };
     let Interaction::Command(command) = interaction else {
       return;
     };
+    println!("INFO : command came: {:?}", command.data);
     match command.data.name.as_str() {
-      "show" => show::execute(&env, &ctx, &command).await,
+      "show" => show::execute(&ctx, &command).await,
       _ => (),
     };
   }
@@ -78,7 +73,7 @@ async fn main() {
     .event_handler(Handler)
     .await
   else {
-    error!("failed to create client");
+    println!("ERROR: failed to create client");
     std::process::exit(1);
   };
   {
@@ -86,51 +81,34 @@ async fn main() {
     data.insert::<Env>(Arc::new(env));
   }
   if let Err(why) = client.start().await {
-    error!("client error: {:#?}", why);
+    println!("ERROR: client error: {:#?}", why);
     std::process::exit(1);
   }
 }
 
 fn init() -> Result<Env, ()> {
-  {
-    use simplelog::*;
-    CombinedLogger::init(vec![
-      TermLogger::new(
-        LevelFilter::Debug,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-      ),
-      WriteLogger::new(
-        LevelFilter::Info,
-        Config::default(),
-        std::fs::File::create("remind4f.log").unwrap(),
-      ),
-    ])
-    .unwrap();
-  }
   let env: Env = match &std::fs::read_to_string("env.toml") {
     Ok(s) => toml::from_str(s).unwrap(),
     Err(e) => {
       if e.kind() == ErrorKind::NotFound {
-        error!(
-          "`env.toml` is not found. Try `cp sample-env.toml env.toml`\n({})",
+        println!(
+          "ERROR: `env.toml` is not found. Try `cp sample-env.toml env.toml`\n({})",
           e
         );
       } else {
-        error!("{}", e);
+        println!("ERROR: {}", e);
       }
       return Err(());
     }
   };
-  debug!("{}", toml::to_string(&env).unwrap());
+  println!("debug: {}", toml::to_string(&env).unwrap());
   {
     if env.discord_bot_token.is_empty() {
-      error!("`settings.discord_bot_token` is empty");
+      println!("ERROR: `settings.discord_bot_token` is empty");
       return Err(());
     }
     if env.channel_id == 0 {
-      error!("`settings.channel_id` is empty");
+      println!("ERROR: `settings.channel_id` is empty");
       return Err(());
     }
   }
@@ -139,7 +117,7 @@ fn init() -> Result<Env, ()> {
   let events_file_path = Path::new("events.toml");
   if !events_file_path.exists() {
     let Ok(mut file) = File::create_new(&events_file_path) else {
-      error!("Cannot find `events.toml` and failed to create it");
+      println!("ERROR: Cannot find `events.toml` and failed to create it");
       return Err(());
     };
     writeln!(
