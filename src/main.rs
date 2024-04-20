@@ -18,7 +18,6 @@ mod show;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Env {
-  pub port:              i64,
   pub discord_bot_token: String,
   pub channel_id:        u64,
   pub disable_everyone:  bool,
