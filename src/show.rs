@@ -1,4 +1,4 @@
-use chrono::{FixedOffset, NaiveDate, NaiveTime, Timelike, Utc};
+use chrono::{FixedOffset, NaiveTime, Timelike, Utc};
 use serenity::all::{
   ChannelId, Colour, CommandInteraction, Context, CreateCommand, CreateEmbed,
   CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
@@ -75,22 +75,22 @@ fn build_embed() -> Result<CreateEmbed, ()> {
     .with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap())
     .date_naive();
   let fields: Vec<(String, String, bool)> = events
-    .events
     .iter()
     .flat_map(|event| {
-      let Ok(event_date) = NaiveDate::parse_from_str(&event.date, "%F") else {
-        println!("ERROR: Failed to parse event date: {:?}", event);
-        return None;
-      };
-      if event_date < today {
+      if event.date < today {
         println!("INFO : Overdue event: {:?}", event);
         return None;
       }
-      let days = (event_date - today).num_days();
+      let days = (event.date - today).num_days();
 
       Some((
         event.title.clone(),
-        format!("Due: {} day{}", days, if days == 1 { "" } else { "s" }),
+        format!(
+          "Date: {}\nDue: __**{} day{}**__",
+          event.date,
+          days,
+          if days == 1 { "" } else { "s" }
+        ),
         false,
       ))
     })

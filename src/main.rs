@@ -112,8 +112,7 @@ fn init() -> Result<Env, ()> {
   }
 
   // initialize `events.toml` if it doesn't exist
-  let events_file_path = Path::new("events.toml");
-  if !events_file_path.exists() {
+  if !Path::new("events.toml").exists() {
     events::write(String::from(
       r#"# [[events]]
 # title = "EventTitle"

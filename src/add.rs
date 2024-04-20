@@ -4,7 +4,7 @@ use serenity::all::{
   CreateInteractionResponse, CreateInteractionResponseMessage, ResolvedOption, ResolvedValue,
 };
 
-use crate::events::{self};
+use crate::events::{self, EventFileEntry, EventsFile};
 
 pub fn register() -> CreateCommand {
   CreateCommand::new("add")
@@ -37,20 +37,27 @@ pub async fn execute(
     else {
       return String::from("Invalid argument: 'date'");
     };
-    if let Err(e) = NaiveDate::parse_from_str(&date, "%F") {
-      return format!(
-        "Failed to parse date; please enter ISO 8601-formatted date (YYYY-MM-DD) => {}",
-        e
-      );
-    }
+    let Ok(date_naive) = NaiveDate::parse_from_str(&date, "%F") else {
+      return format!("Failed to parse date; please enter ISO 8601-formatted date (YYYY-MM-DD)",);
+    };
     let Ok(mut events) = events::read_events() else {
       return String::from("Failed to read events");
     };
-    events.events.push(crate::events::Event {
+    events.push(crate::events::Event {
       title: title.to_string(),
-      date:  date.to_string(),
+      date:  date_naive,
     });
-    String::from(match events::write(events.to_string()) {
+    events.sort_by(|a, b| a.date.cmp(&b.date));
+    let events_file = EventsFile {
+      events: events
+        .into_iter()
+        .map(|e| EventFileEntry {
+          title: e.title,
+          date:  e.date.to_string(),
+        })
+        .collect(),
+    };
+    String::from(match events::write(events_file.to_string()) {
       Ok(_) => "Created!",
       Err(_) => "Failed to write events to file",
     })

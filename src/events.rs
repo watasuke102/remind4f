@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use std::{
   fs::OpenOptions,
@@ -7,12 +8,17 @@ use std::{
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Event {
   pub title: String,
-  pub date:  String,
+  pub date:  NaiveDate,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EventFileEntry {
+  pub title: String,
+  pub date:  String,
+}
 #[derive(Serialize, Deserialize)]
 pub struct EventsFile {
-  pub events: Vec<Event>,
+  pub events: Vec<EventFileEntry>,
 }
 impl EventsFile {
   pub fn to_string(&self) -> String {
@@ -20,9 +26,9 @@ impl EventsFile {
   }
 }
 
-pub fn read_events() -> Result<EventsFile, ()> {
-  match &std::fs::read_to_string("events.toml") {
-    Ok(s) => Ok(toml::from_str(s).unwrap()),
+pub fn read_events() -> Result<Vec<Event>, ()> {
+  let events: EventsFile = match &std::fs::read_to_string("events.toml") {
+    Ok(s) => toml::from_str(s).unwrap(),
     Err(e) => {
       if e.kind() == ErrorKind::NotFound {
         println!(
@@ -34,7 +40,24 @@ pub fn read_events() -> Result<EventsFile, ()> {
       }
       return Err(());
     }
-  }
+  };
+  let mut events: Vec<Event> = events
+    .events
+    .into_iter()
+    .flat_map(|event| {
+      let Ok(event_date) = NaiveDate::parse_from_str(&event.date, "%F") else {
+        println!("ERROR: Failed to parse event date: {:?}", event);
+        return None;
+      };
+
+      Some(Event {
+        title: event.title,
+        date:  event_date,
+      })
+    })
+    .collect();
+  events.sort_by(|a, b| a.date.cmp(&b.date));
+  Ok(events)
 }
 
 pub fn write(text: String) -> Result<(), ()> {
