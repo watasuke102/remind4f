@@ -4,60 +4,32 @@
 // Email  : <watasuke102@gmail.com>
 // Twitter: @Watasuke102
 // This software is released under the MIT or MIT SUSHI-WARE License.
-use chrono::{FixedOffset, NaiveDate, NaiveTime, Timelike, Utc};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serenity::{
+  all::{Context, EventHandler, GatewayIntents, GuildId, Interaction, Ready},
+  async_trait,
+  prelude::TypeMapKey,
+  Client,
+};
 use std::{
   fs::File,
   io::{ErrorKind, Write},
   path::Path,
-  sync::{Arc, RwLock},
+  sync::Arc,
 };
+mod show;
 
-#[tokio::main]
-async fn send_message(
-  env: &Env,
-  title: String,
-  embeds: &Embed,
-) -> Result<(), Box<dyn std::error::Error>> {
-  info!("Sending message '{}'", title);
-  let client = reqwest::Client::new();
-  let _resp = client
-    .post(format!(
-      "https://discord.com/api/channels/{}/messages",
-      env.channel_id
-    ))
-    .header("Content-Type", "application/json")
-    .header("Authorization", format!("Bot {}", env.discord_bot_token))
-    .body(
-      json!({
-          "content": format!("{}{}",
-              if env.disable_everyone{""} else {"@everyone "},
-              title
-          ),
-          "tts": false,
-          "embeds": [embeds]
-      })
-      .to_string(),
-    )
-    .send()
-    .await?;
-  Ok(())
-}
-
-#[derive(Debug, Clone)]
-struct Context {
-  env:    Arc<Env>,
-  events: Arc<RwLock<Vec<Event>>>,
-}
 #[derive(Debug, Serialize, Deserialize)]
-struct Env {
-  port:              i64,
-  discord_bot_token: String,
-  channel_id:        u64,
-  disable_everyone:  bool,
-  notice_time:       String,
+pub struct Env {
+  pub port:              i64,
+  pub discord_bot_token: String,
+  pub channel_id:        u64,
+  pub disable_everyone:  bool,
+  pub notice_time:       String,
+}
+impl TypeMapKey for Env {
+  type Value = Arc<Env>;
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct Event {
@@ -65,81 +37,66 @@ struct Event {
   date:  String,
 }
 
-fn main() {
-  let jst = FixedOffset::east_opt(9 * 3600).unwrap();
-  let Ok(ctx) = init() else {
-    std::process::exit(1);
-  };
-  let Ok(notice_time) = NaiveTime::parse_from_str(&ctx.env.notice_time, "%H:%M") else {
-    error!("Failed to parse `notice_time`; please check data.toml");
-    std::process::exit(1);
-  };
-
-  info!("Bot is ready");
-  loop {
-    debug!("tick");
-    let now = Utc::now().with_timezone(&jst);
-    if now.time().hour() == notice_time.hour() && now.time().minute() == notice_time.minute() {
-      info!("On time!");
-      match send_message(
-        &ctx.env,
-        String::from("I remind you of upcoming events!"),
-        // TODO: check whether it is empty
-        &build_embed(&ctx.events.read().unwrap()),
-      ) {
-        Ok(_) => info!("The message was sent"),
-        Err(e) => error!("Something went wrong when sending the message: {:#?}", e),
-      }
-    }
-    std::thread::sleep(core::time::Duration::from_millis(1000 * 60));
-  }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Embed {
-  title:  String,
-  color:  u32,
-  fields: Vec<Field>,
-}
-#[derive(Debug, Serialize, Deserialize)]
-struct Field {
-  name:  String,
-  value: String,
-}
-
-fn build_embed(events: &Vec<Event>) -> Embed {
-  let today = Utc::now()
-    .with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap())
-    .date_naive();
-  let mut result = Embed {
-    title:  "Events".to_string(),
-    color:  0x98c379,
-    fields: Vec::<Field>::new(),
-  };
-  for event in events {
-    let Ok(event_date) = NaiveDate::parse_from_str(&event.date, "%F") else {
-      error!("Failed to parse event date: {:?}", event);
-      continue;
+struct Handler;
+#[async_trait]
+impl EventHandler for Handler {
+  async fn ready(&self, ctx: Context, ready: Ready) {
+    let data = ctx.data.read().await;
+    let Some(env) = data.get::<Env>() else {
+      return;
     };
-    if event_date < today {
-      info!("Overdue event: {:?}", event);
-      continue;
-    }
-    let days = (event_date - today).num_days();
-    result.fields.push(Field {
-      name:  event.title.clone(),
-      value: format!("Due: {} day{}", days, if days == 1 { "" } else { "s" }),
-    })
+    GuildId::new(env.channel_id)
+      .set_commands(&ctx.http, vec![show::register()])
+      .await;
+    info!(
+      "ready> name: {}, version: {}",
+      ready.user.name, ready.version
+    );
   }
-  result
+  async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+    let data = ctx.data.read().await;
+    let Some(env) = data.get::<Env>() else {
+      return;
+    };
+    let Interaction::Command(command) = interaction else {
+      return;
+    };
+    match command.data.name.as_str() {
+      "show" => show::execute(&env, &ctx, &command).await,
+      _ => (),
+    };
+  }
 }
 
-fn init() -> Result<Context, ()> {
+#[tokio::main]
+async fn main() {
+  let Ok(env) = init() else {
+    std::process::exit(1);
+  };
+
+  let Ok(mut client) = Client::builder(&env.discord_bot_token, GatewayIntents::empty())
+    .event_handler(Handler)
+    .await
+  else {
+    error!("failed to create client");
+    std::process::exit(1);
+  };
+  {
+    let mut data = client.data.write().await;
+    data.insert::<Env>(Arc::new(env));
+  }
+  if let Err(why) = client.start().await {
+    error!("client error: {:#?}", why);
+    std::process::exit(1);
+  }
+}
+
+fn init() -> Result<Env, ()> {
   {
     use simplelog::*;
     CombinedLogger::init(vec![
       TermLogger::new(
-        LevelFilter::Trace,
+        LevelFilter::Debug,
         Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
@@ -195,27 +152,5 @@ fn init() -> Result<Context, ()> {
     .unwrap();
   }
 
-  #[derive(Deserialize)]
-  struct EventsFile {
-    events: Vec<Event>,
-  }
-  let events: EventsFile = match &std::fs::read_to_string(&events_file_path) {
-    Ok(s) => toml::from_str(s).unwrap(),
-    Err(e) => {
-      if e.kind() == ErrorKind::NotFound {
-        error!(
-          "`events.toml` is not found. Try `cp sample-events.toml events.toml`\n({})",
-          e
-        );
-      } else {
-        error!("{}", e);
-      }
-      return Err(());
-    }
-  };
-
-  Ok(Context {
-    env:    Arc::new(env),
-    events: Arc::new(RwLock::new(events.events)),
-  })
+  Ok(env)
 }
